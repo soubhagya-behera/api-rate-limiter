@@ -34,9 +34,18 @@ public class RateLimiterService {
 	}
 
 	public RateLimitResponse consume(String clientIp) {
+		return consume(clientIp, properties.getMaxRequests(), properties.getWindowSeconds());
+	}
+
+	public RateLimitResponse consume(String clientIp, int maxRequests, int windowSeconds) {
+		if (maxRequests <= 0) {
+			maxRequests = properties.getMaxRequests();
+		}
+		if (windowSeconds <= 0) {
+			windowSeconds = properties.getWindowSeconds();
+		}
+
 		String key = buildKey(clientIp);
-		int maxRequests = properties.getMaxRequests();
-		int windowSeconds = properties.getWindowSeconds();
 
 		List<?> result = redisTemplate.execute(RATE_LIMIT_SCRIPT, List.of(key),
 				String.valueOf(maxRequests), String.valueOf(windowSeconds));

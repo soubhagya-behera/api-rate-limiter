@@ -1,5 +1,7 @@
 package com.soubhagya.api_rate_limiter.controller;
 
+import com.soubhagya.api_rate_limiter.annotation.RateLimited;
+import com.soubhagya.api_rate_limiter.config.RateLimitedInterceptor;
 import com.soubhagya.api_rate_limiter.model.RateLimitResponse;
 import com.soubhagya.api_rate_limiter.model.RateLimitStatusResponse;
 import com.soubhagya.api_rate_limiter.service.RateLimiterService;
@@ -46,10 +48,19 @@ public class RateLimiterController {
 							examples = @ExampleObject(name = "Rate limited",
 									value = "{\"success\": false, \"message\": \"Too many requests\", \"remainingRequests\": 0, \"retryAfterSeconds\": 45}")))
 	})
+	@RateLimited
 	@GetMapping("/test")
 	public RateLimitResponse test(HttpServletRequest request) {
-		String clientIp = request.getRemoteAddr();
-		return rateLimiterService.consume(clientIp);
+		return RateLimitedInterceptor.responseFrom(request);
+	}
+
+	@Operation(summary = "Demo endpoint with endpoint-specific rate-limit configuration",
+			description = "Protected by @RateLimited(maxRequests = 10, windowSeconds = 60). "
+					+ "Shows how annotation-level configuration overrides the global rate-limit.* defaults.")
+	@RateLimited(maxRequests = 10, windowSeconds = 60)
+	@GetMapping("/demo")
+	public RateLimitResponse demo(HttpServletRequest request) {
+		return RateLimitedInterceptor.responseFrom(request);
 	}
 
 	@Operation(summary = "Get the current rate-limit status for the requesting client IP",
