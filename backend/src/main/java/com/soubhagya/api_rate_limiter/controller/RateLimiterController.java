@@ -1,6 +1,7 @@
 package com.soubhagya.api_rate_limiter.controller;
 
 import com.soubhagya.api_rate_limiter.model.RateLimitResponse;
+import com.soubhagya.api_rate_limiter.model.RateLimitStatusResponse;
 import com.soubhagya.api_rate_limiter.service.RateLimiterService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.headers.Header;
@@ -49,6 +50,27 @@ public class RateLimiterController {
 	public RateLimitResponse test(HttpServletRequest request) {
 		String clientIp = request.getRemoteAddr();
 		return rateLimiterService.consume(clientIp);
+	}
+
+	@Operation(summary = "Get the current rate-limit status for the requesting client IP",
+			description = "Read-only endpoint that reports how many requests the calling client IP has already consumed "
+					+ "in the current window and how many remain. It does NOT consume a request. "
+					+ "status is READY when no window exists yet, ACTIVE while the window is in use, "
+					+ "and LIMIT_REACHED when the limit has been consumed.")
+	@ApiResponses({
+			@ApiResponse(responseCode = "200",
+					description = "Rate-limit status for the requesting client IP. "
+							+ "remaining is max(limit - used, 0) and resetInSeconds is the Redis TTL of the client's "
+							+ "rate-limit key (0 when no window exists yet).",
+					content = @Content(schema = @Schema(implementation = RateLimitStatusResponse.class),
+							examples = @ExampleObject(name = "Active window",
+									value = "{\"limit\": 5, \"used\": 2, \"remaining\": 3, \"windowSeconds\": 60, "
+											+ "\"resetInSeconds\": 42, \"status\": \"ACTIVE\"}")))
+	})
+	@GetMapping("/rate-limit/status")
+	public RateLimitStatusResponse status(HttpServletRequest request) {
+		String clientIp = request.getRemoteAddr();
+		return rateLimiterService.getStatus(clientIp);
 	}
 
 }

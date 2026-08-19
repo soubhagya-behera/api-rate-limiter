@@ -3,6 +3,7 @@ package com.soubhagya.api_rate_limiter.service;
 import com.soubhagya.api_rate_limiter.config.RateLimiterProperties;
 import com.soubhagya.api_rate_limiter.exception.RateLimitExceededException;
 import com.soubhagya.api_rate_limiter.model.RateLimitResponse;
+import com.soubhagya.api_rate_limiter.model.RateLimitStatusResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -83,6 +84,44 @@ class RateLimiterServiceTest {
 				.isInstanceOf(RateLimitExceededException.class)
 				.hasMessage("Too many requests")
 				.satisfies(ex -> assertThat(((RateLimitExceededException) ex).getRetryAfterSeconds()).isEqualTo(42L));
+	}
+
+	@Test
+	void rejectedRequestRollsBackCounterToTheLimit() {
+		when(valueOperations.increment(KEY)).thenReturn(6L);
+		when(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).thenReturn(42L);
+
+		assertThatThrownBy(() -> service.consume(CLIENT_IP))
+				.isInstanceOf(RateLimitExceededException.class);
+
+		verify(valueOperations).decrement(KEY);
+	}
+
+	@Test
+	void allowedRequestAtTheLimitDoesNotRollBackCounter() {
+		when(valueOperations.increment(KEY)).thenReturn(5L);
+
+		service.consume(CLIENT_IP);
+
+		verify(valueOperations, never()).decrement(KEY);
+	}
+
+	@Test
+	void rejectedRequestDoesNotIncreaseReportedUsedCount() {
+		when(valueOperations.increment(KEY)).thenReturn(6L);
+		when(valueOperations.decrement(KEY)).thenReturn(5L);
+		when(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).thenReturn(42L);
+
+		assertThatThrownBy(() -> service.consume(CLIENT_IP))
+				.isInstanceOf(RateLimitExceededException.class);
+
+		when(valueOperations.get(KEY)).thenReturn("5");
+
+		RateLimitStatusResponse status = service.getStatus(CLIENT_IP);
+
+		assertThat(status.used()).isEqualTo(5);
+		assertThat(status.remaining()).isZero();
+		assertThat(status.status()).isEqualTo("LIMIT_REACHED");
 	}
 
 }
