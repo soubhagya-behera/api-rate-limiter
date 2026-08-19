@@ -4,16 +4,26 @@ import com.soubhagya.api_rate_limiter.config.RateLimiterProperties;
 import com.soubhagya.api_rate_limiter.exception.RateLimitExceededException;
 import com.soubhagya.api_rate_limiter.model.RateLimitResponse;
 import com.soubhagya.api_rate_limiter.model.RateLimitStatusResponse;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @Service
 public class RateLimiterService {
 
 	private static final String KEY_PATTERN = "%s:%s";
+
+	@SuppressWarnings("rawtypes")
+	private static final DefaultRedisScript<List> RATE_LIMIT_SCRIPT = new DefaultRedisScript<>();
+
+	static {
+		RATE_LIMIT_SCRIPT.setLocation(new ClassPathResource("scripts/rate-limit.lua"));
+		RATE_LIMIT_SCRIPT.setResultType(List.class);
+	}
 
 	private final StringRedisTemplate redisTemplate;
 	private final RateLimiterProperties properties;
@@ -24,28 +34,28 @@ public class RateLimiterService {
 	}
 
 	public RateLimitResponse consume(String clientIp) {
-		String key = String.format(KEY_PATTERN, properties.getKeyPrefix(), clientIp);
+		String key = buildKey(clientIp);
+		int maxRequests = properties.getMaxRequests();
+		int windowSeconds = properties.getWindowSeconds();
 
-		Long count = redisTemplate.opsForValue().increment(key);
+		List<?> result = redisTemplate.execute(RATE_LIMIT_SCRIPT, List.of(key),
+				String.valueOf(maxRequests), String.valueOf(windowSeconds));
 
-		if (count != null && count == 1L) {
-			redisTemplate.expire(key, Duration.ofSeconds(properties.getWindowSeconds()));
-		}
+		long count = asLong(result.get(0));
+		long ttl = asLong(result.get(1));
+		long allowed = asLong(result.get(2));
+		long remaining = asLong(result.get(3));
 
-		if (count == null || count > properties.getMaxRequests()) {
-			if (count != null) {
-				redisTemplate.opsForValue().decrement(key);
-			}
-			long retryAfterSeconds = redisTemplate.getExpire(key, TimeUnit.SECONDS);
+		if (allowed == 0L) {
+			long retryAfterSeconds = Math.max(ttl, 0L);
 			throw new RateLimitExceededException(retryAfterSeconds);
 		}
 
-		long remainingRequests = (long) properties.getMaxRequests() - count;
-		return RateLimitResponse.allowed(remainingRequests);
+		return RateLimitResponse.allowed(remaining);
 	}
 
 	public RateLimitStatusResponse getStatus(String clientIp) {
-		String key = String.format(KEY_PATTERN, properties.getKeyPrefix(), clientIp);
+		String key = buildKey(clientIp);
 		int limit = properties.getMaxRequests();
 		int windowSeconds = properties.getWindowSeconds();
 
@@ -64,6 +74,17 @@ public class RateLimiterService {
 
 		long remaining = Math.max((long) limit - used, 0L);
 		return new RateLimitStatusResponse(limit, used, remaining, windowSeconds, resetInSeconds, status);
+	}
+
+	private String buildKey(String clientIp) {
+		return String.format(KEY_PATTERN, properties.getKeyPrefix(), clientIp);
+	}
+
+	private static long asLong(Object value) {
+		if (value instanceof Number) {
+			return ((Number) value).longValue();
+		}
+		return Long.parseLong(value.toString());
 	}
 
 }

@@ -7,17 +7,21 @@ import com.soubhagya.api_rate_limiter.model.RateLimitStatusResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 
-import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.never;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -39,7 +43,6 @@ class RateLimiterServiceTest {
 	void setUp() {
 		RateLimiterProperties properties = new RateLimiterProperties();
 		service = new RateLimiterService(redisTemplate, properties);
-		when(redisTemplate.opsForValue()).thenReturn(valueOperations);
 	}
 
 	private RateLimiterService serviceWith(int maxRequests, int windowSeconds, String keyPrefix) {
@@ -50,140 +53,164 @@ class RateLimiterServiceTest {
 		return new RateLimiterService(redisTemplate, properties);
 	}
 
-	@Test
-	void allowsRequestWhenCountIsBelowLimitAndSetsExpirationOnNewKey() {
-		when(valueOperations.increment(KEY)).thenReturn(1L);
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private void stubExecute(Object count, Object ttl, Object allowed, Object remaining) {
+		when(redisTemplate.execute(any(RedisScript.class), anyList(), any(), any()))
+				.thenReturn(List.of(count, ttl, allowed, remaining));
+	}
+
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private RateLimitResponse consumeAndCaptureArguments(List<String> keysOut, List<Object> argsOut) {
+		ArgumentCaptor<List> keysCaptor = ArgumentCaptor.forClass(List.class);
+		ArgumentCaptor<Object> firstArgCaptor = ArgumentCaptor.forClass(Object.class);
+		ArgumentCaptor<Object> secondArgCaptor = ArgumentCaptor.forClass(Object.class);
 
 		RateLimitResponse response = service.consume(CLIENT_IP);
+
+		verify(redisTemplate).execute(any(RedisScript.class), keysCaptor.capture(),
+				firstArgCaptor.capture(), secondArgCaptor.capture());
+		keysOut.addAll(keysCaptor.getValue());
+		argsOut.add(firstArgCaptor.getValue());
+		argsOut.add(secondArgCaptor.getValue());
+		return response;
+	}
+
+	@Test
+	void firstRequestStartsTheWindowAndIsAllowed() {
+		stubExecute(1L, 60L, 1L, 4L);
+
+		List<String> keys = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		RateLimitResponse response = consumeAndCaptureArguments(keys, args);
 
 		assertThat(response.success()).isTrue();
 		assertThat(response.message()).isEqualTo("Request allowed");
 		assertThat(response.remainingRequests()).isEqualTo(4);
 		assertThat(response.retryAfterSeconds()).isNull();
-		verify(redisTemplate).expire(KEY, Duration.ofSeconds(60));
+		assertThat(keys).containsExactly(KEY);
+		assertThat(args).containsExactly("5", "60");
 	}
 
 	@Test
-	void allowsRequestWhenCountIsExactlyAtTheLimit() {
-		when(valueOperations.increment(KEY)).thenReturn(5L);
+	void allowsRequestsOneThroughFiveWithDecreasingRemaining() {
+		for (int count = 1; count <= 5; count++) {
+			stubExecute((long) count, 60L, 1L, (long) (5 - count));
+
+			RateLimitResponse response = service.consume(CLIENT_IP);
+
+			assertThat(response.success()).isTrue();
+			assertThat(response.remainingRequests()).isEqualTo(5 - count);
+		}
+	}
+
+	@Test
+	void allowsRequestExactlyAtTheLimitWithZeroRemaining() {
+		stubExecute(5L, 30L, 1L, 0L);
 
 		RateLimitResponse response = service.consume(CLIENT_IP);
 
 		assertThat(response.success()).isTrue();
 		assertThat(response.remainingRequests()).isZero();
-		verify(redisTemplate, never()).expire(KEY, Duration.ofSeconds(60));
 	}
 
 	@Test
-	void doesNotResetExpirationForExistingKeys() {
-		when(valueOperations.increment(KEY)).thenReturn(3L);
-
-		service.consume(CLIENT_IP);
-
-		verify(redisTemplate, never()).expire(KEY, Duration.ofSeconds(60));
-	}
-
-	@Test
-	void rejectsRequestWhenCountExceedsTheLimit() {
-		when(valueOperations.increment(KEY)).thenReturn(6L);
-		when(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).thenReturn(42L);
+	void rejectsTheSixthRequestAndReportsRetryAfterFromTtl() {
+		stubExecute(5L, 37L, 0L, 0L);
 
 		assertThatThrownBy(() -> service.consume(CLIENT_IP))
 				.isInstanceOf(RateLimitExceededException.class)
 				.hasMessage("Too many requests")
-				.satisfies(ex -> assertThat(((RateLimitExceededException) ex).getRetryAfterSeconds()).isEqualTo(42L));
-	}
-
-	@Test
-	void rejectedRequestRollsBackCounterToTheLimit() {
-		when(valueOperations.increment(KEY)).thenReturn(6L);
-		when(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).thenReturn(42L);
-
-		assertThatThrownBy(() -> service.consume(CLIENT_IP))
-				.isInstanceOf(RateLimitExceededException.class);
-
-		verify(valueOperations).decrement(KEY);
-	}
-
-	@Test
-	void allowedRequestAtTheLimitDoesNotRollBackCounter() {
-		when(valueOperations.increment(KEY)).thenReturn(5L);
-
-		service.consume(CLIENT_IP);
-
-		verify(valueOperations, never()).decrement(KEY);
-	}
-
-	@Test
-	void allowsConfiguredMaxRequests() {
-		service = serviceWith(10, 60, "rate-limit:ip");
-		when(valueOperations.increment(KEY)).thenReturn(10L);
-
-		RateLimitResponse response = service.consume(CLIENT_IP);
-
-		assertThat(response.success()).isTrue();
-		assertThat(response.remainingRequests()).isZero();
-		verify(valueOperations, never()).decrement(KEY);
-	}
-
-	@Test
-	void allowsMoreRequestsThanDefaultLimitWhenConfigured() {
-		service = serviceWith(10, 60, "rate-limit:ip");
-		when(valueOperations.increment(KEY)).thenReturn(7L);
-
-		RateLimitResponse response = service.consume(CLIENT_IP);
-
-		assertThat(response.success()).isTrue();
-		assertThat(response.remainingRequests()).isEqualTo(3);
-	}
-
-	@Test
-	void rejectsWhenConfiguredLimitIsExceeded() {
-		service = serviceWith(10, 60, "rate-limit:ip");
-		when(valueOperations.increment(KEY)).thenReturn(11L);
-		when(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).thenReturn(45L);
-
-		assertThatThrownBy(() -> service.consume(CLIENT_IP))
-				.isInstanceOf(RateLimitExceededException.class);
-	}
-
-	@Test
-	void usesConfiguredWindowForExpiration() {
-		service = serviceWith(5, 30, "rate-limit:ip");
-		when(valueOperations.increment(KEY)).thenReturn(1L);
-
-		service.consume(CLIENT_IP);
-
-		verify(redisTemplate).expire(KEY, Duration.ofSeconds(30));
-	}
-
-	@Test
-	void usesConfiguredKeyPrefix() {
-		String customKey = "custom:prefix:" + CLIENT_IP;
-		service = serviceWith(5, 60, "custom:prefix");
-		when(valueOperations.increment(customKey)).thenReturn(1L);
-
-		service.consume(CLIENT_IP);
-
-		verify(redisTemplate).expire(customKey, Duration.ofSeconds(60));
+				.satisfies(ex -> assertThat(((RateLimitExceededException) ex).getRetryAfterSeconds()).isEqualTo(37L));
 	}
 
 	@Test
 	void rejectedRequestDoesNotIncreaseReportedUsedCount() {
-		when(valueOperations.increment(KEY)).thenReturn(6L);
-		when(valueOperations.decrement(KEY)).thenReturn(5L);
-		when(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).thenReturn(42L);
+		stubExecute(5L, 42L, 0L, 0L);
 
 		assertThatThrownBy(() -> service.consume(CLIENT_IP))
 				.isInstanceOf(RateLimitExceededException.class);
 
+		when(redisTemplate.opsForValue()).thenReturn(valueOperations);
 		when(valueOperations.get(KEY)).thenReturn("5");
+		when(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).thenReturn(42L);
 
 		RateLimitStatusResponse status = service.getStatus(CLIENT_IP);
 
 		assertThat(status.used()).isEqualTo(5);
 		assertThat(status.remaining()).isZero();
 		assertThat(status.status()).isEqualTo("LIMIT_REACHED");
+	}
+
+	@Test
+	void remainingNeverBecomesNegativeForAllowedRequests() {
+		stubExecute(5L, 30L, 1L, 0L);
+
+		RateLimitResponse response = service.consume(CLIENT_IP);
+
+		assertThat(response.success()).isTrue();
+		assertThat(response.remainingRequests()).isZero();
+	}
+
+	@Test
+	void rejectedRequestReportsZeroRemaining() {
+		stubExecute(5L, 30L, 0L, 0L);
+
+		assertThatThrownBy(() -> service.consume(CLIENT_IP))
+				.isInstanceOf(RateLimitExceededException.class);
+	}
+
+	@Test
+	void clampsNegativeTtlToZeroForRetryAfter() {
+		stubExecute(5L, -1L, 0L, 0L);
+
+		assertThatThrownBy(() -> service.consume(CLIENT_IP))
+				.satisfies(ex -> assertThat(((RateLimitExceededException) ex).getRetryAfterSeconds()).isZero());
+	}
+
+	@Test
+	void allowsConfiguredMaxRequests() {
+		service = serviceWith(10, 60, "rate-limit:ip");
+		stubExecute(10L, 60L, 1L, 0L);
+
+		RateLimitResponse response = service.consume(CLIENT_IP);
+
+		assertThat(response.success()).isTrue();
+		assertThat(response.remainingRequests()).isZero();
+	}
+
+	@Test
+	void usesConfiguredLimitAndWindowAsScriptArguments() {
+		service = serviceWith(7, 30, "custom:prefix");
+		stubExecute(1L, 30L, 1L, 6L);
+
+		List<String> keys = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		consumeAndCaptureArguments(keys, args);
+
+		assertThat(keys).containsExactly("custom:prefix:" + CLIENT_IP);
+		assertThat(args).containsExactly("7", "30");
+	}
+
+	@Test
+	void usesConfiguredKeyPrefixForTheKey() {
+		service = serviceWith(5, 60, "custom:prefix");
+		stubExecute(1L, 60L, 1L, 4L);
+
+		List<String> keys = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		consumeAndCaptureArguments(keys, args);
+
+		assertThat(keys).containsExactly("custom:prefix:" + CLIENT_IP);
+	}
+
+	@Test
+	void parsesNumericResultsRegardlessOfNumberType() {
+		stubExecute(1, 60, 1, 4);
+
+		RateLimitResponse response = service.consume(CLIENT_IP);
+
+		assertThat(response.success()).isTrue();
+		assertThat(response.remainingRequests()).isEqualTo(4);
 	}
 
 }
