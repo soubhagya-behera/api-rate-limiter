@@ -42,6 +42,14 @@ class RateLimiterServiceTest {
 		when(redisTemplate.opsForValue()).thenReturn(valueOperations);
 	}
 
+	private RateLimiterService serviceWith(int maxRequests, int windowSeconds, String keyPrefix) {
+		RateLimiterProperties properties = new RateLimiterProperties();
+		properties.setMaxRequests(maxRequests);
+		properties.setWindowSeconds(windowSeconds);
+		properties.setKeyPrefix(keyPrefix);
+		return new RateLimiterService(redisTemplate, properties);
+	}
+
 	@Test
 	void allowsRequestWhenCountIsBelowLimitAndSetsExpirationOnNewKey() {
 		when(valueOperations.increment(KEY)).thenReturn(1L);
@@ -104,6 +112,60 @@ class RateLimiterServiceTest {
 		service.consume(CLIENT_IP);
 
 		verify(valueOperations, never()).decrement(KEY);
+	}
+
+	@Test
+	void allowsConfiguredMaxRequests() {
+		service = serviceWith(10, 60, "rate-limit:ip");
+		when(valueOperations.increment(KEY)).thenReturn(10L);
+
+		RateLimitResponse response = service.consume(CLIENT_IP);
+
+		assertThat(response.success()).isTrue();
+		assertThat(response.remainingRequests()).isZero();
+		verify(valueOperations, never()).decrement(KEY);
+	}
+
+	@Test
+	void allowsMoreRequestsThanDefaultLimitWhenConfigured() {
+		service = serviceWith(10, 60, "rate-limit:ip");
+		when(valueOperations.increment(KEY)).thenReturn(7L);
+
+		RateLimitResponse response = service.consume(CLIENT_IP);
+
+		assertThat(response.success()).isTrue();
+		assertThat(response.remainingRequests()).isEqualTo(3);
+	}
+
+	@Test
+	void rejectsWhenConfiguredLimitIsExceeded() {
+		service = serviceWith(10, 60, "rate-limit:ip");
+		when(valueOperations.increment(KEY)).thenReturn(11L);
+		when(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).thenReturn(45L);
+
+		assertThatThrownBy(() -> service.consume(CLIENT_IP))
+				.isInstanceOf(RateLimitExceededException.class);
+	}
+
+	@Test
+	void usesConfiguredWindowForExpiration() {
+		service = serviceWith(5, 30, "rate-limit:ip");
+		when(valueOperations.increment(KEY)).thenReturn(1L);
+
+		service.consume(CLIENT_IP);
+
+		verify(redisTemplate).expire(KEY, Duration.ofSeconds(30));
+	}
+
+	@Test
+	void usesConfiguredKeyPrefix() {
+		String customKey = "custom:prefix:" + CLIENT_IP;
+		service = serviceWith(5, 60, "custom:prefix");
+		when(valueOperations.increment(customKey)).thenReturn(1L);
+
+		service.consume(CLIENT_IP);
+
+		verify(redisTemplate).expire(customKey, Duration.ofSeconds(60));
 	}
 
 	@Test

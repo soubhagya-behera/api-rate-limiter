@@ -28,16 +28,16 @@ public class RateLimiterController {
 	}
 
 	@Operation(summary = "Test endpoint protected by the rate limiter",
-			description = "Each request is tracked per client IP. A fixed window allows up to 5 requests "
-					+ "per 60 seconds; further requests are rejected with HTTP 429 until the window expires.")
+			description = "Each request is tracked per client IP. A fixed window allows a configurable number of requests "
+					+ "per window (see rate-limit.* properties); further requests are rejected with HTTP 429 until the window expires.")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200",
-					description = "Request allowed. remainingRequests shows how many more requests are left in the current 60 second window before the limit is reached.",
+					description = "Request allowed. remainingRequests shows how many more requests are left in the current window before the limit is reached.",
 					content = @Content(schema = @Schema(implementation = RateLimitResponse.class),
 							examples = @ExampleObject(name = "Allowed",
 									value = "{\"success\": true, \"message\": \"Request allowed\", \"remainingRequests\": 4}"))),
 			@ApiResponse(responseCode = "429",
-					description = "Too many requests. The limit of 5 requests per 60 seconds has been reached. "
+					description = "Too many requests. The configured request limit for the current window has been reached. "
 							+ "remainingRequests is 0 and retryAfterSeconds indicates the number of seconds to wait before the window resets.",
 					headers = @Header(name = "Retry-After",
 							description = "Number of seconds the client should wait before retrying",

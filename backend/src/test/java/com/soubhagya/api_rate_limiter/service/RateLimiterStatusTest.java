@@ -54,6 +54,24 @@ class RateLimiterStatusTest {
 	}
 
 	@Test
+	void reportsStatusUsingConfiguredValues() {
+		RateLimiterProperties properties = new RateLimiterProperties();
+		properties.setMaxRequests(10);
+		properties.setWindowSeconds(30);
+		service = new RateLimiterService(redisTemplate, properties);
+		when(valueOperations.get(KEY)).thenReturn("2");
+		when(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).thenReturn(25L);
+
+		RateLimitStatusResponse response = service.getStatus(CLIENT_IP);
+
+		assertThat(response.limit()).isEqualTo(10);
+		assertThat(response.windowSeconds()).isEqualTo(30);
+		assertThat(response.used()).isEqualTo(2);
+		assertThat(response.remaining()).isEqualTo(8);
+		assertThat(response.resetInSeconds()).isEqualTo(25);
+	}
+
+	@Test
 	void reportsActiveWindowWithTtl() {
 		when(valueOperations.get(KEY)).thenReturn("2");
 		when(redisTemplate.getExpire(KEY, TimeUnit.SECONDS)).thenReturn(42L);

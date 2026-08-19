@@ -7,7 +7,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 public record RateLimitResponse(
 		@Schema(description = "Whether the request was allowed", example = "true") boolean success,
 		@Schema(description = "Human readable status message", example = "Request allowed") String message,
-		@Schema(description = "Requests still available in the current 60 second window. 0 when the rate limit has been reached.",
+		@Schema(description = "Requests still available in the current window. 0 when the rate limit has been reached.",
 				example = "4") long remainingRequests,
 		@Schema(description = "Seconds to wait before retrying. Only present in the HTTP 429 response.",
 				example = "45") Long retryAfterSeconds) {

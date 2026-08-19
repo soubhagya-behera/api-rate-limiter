@@ -1,14 +1,19 @@
 package com.soubhagya.api_rate_limiter.config;
 
+import jakarta.validation.constraints.Positive;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
 
 @Component
-@ConfigurationProperties(prefix = "rate-limiter")
+@Validated
+@ConfigurationProperties(prefix = "rate-limit")
 public class RateLimiterProperties {
 
+	@Positive
 	private int maxRequests = 5;
 
+	@Positive
 	private int windowSeconds = 60;
 
 	private String keyPrefix = "rate-limit:ip";
