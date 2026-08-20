@@ -35,6 +35,7 @@ public class RateLimitedInterceptor implements HandlerInterceptor {
 
 		RateLimitResponse rateLimitResponse = rateLimiterService.consume(
 				request.getRemoteAddr(), rateLimited.maxRequests(), rateLimited.windowSeconds());
+		RateLimitHeaders.apply(response, rateLimitResponse);
 		request.setAttribute(RESPONSE_ATTRIBUTE, rateLimitResponse);
 		return true;
 	}

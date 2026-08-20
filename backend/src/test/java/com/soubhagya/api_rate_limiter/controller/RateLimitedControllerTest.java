@@ -105,4 +105,85 @@ class RateLimitedControllerTest {
 		verify(rateLimiterService, never()).consume(anyString());
 	}
 
+	@Test
+	void allowedResponseIncludesRateLimitHeaders() throws Exception {
+		when(rateLimiterService.consume("10.0.0.10", -1, -1))
+				.thenReturn(RateLimitResponse.allowed(4, 5, 57));
+
+		mockMvc.perform(requestWithClientIp("/api/test", "10.0.0.10"))
+				.andExpect(status().isOk())
+				.andExpect(header().string("X-RateLimit-Limit", "5"))
+				.andExpect(header().string("X-RateLimit-Remaining", "4"))
+				.andExpect(header().string("X-RateLimit-Reset", "57"));
+	}
+
+	@Test
+	void allowedResponseKeepsJsonBodyUnchanged() throws Exception {
+		when(rateLimiterService.consume("10.0.0.11", -1, -1))
+				.thenReturn(RateLimitResponse.allowed(4, 5, 57));
+
+		mockMvc.perform(requestWithClientIp("/api/test", "10.0.0.11"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.success").value(true))
+				.andExpect(jsonPath("$.message").value("Request allowed"))
+				.andExpect(jsonPath("$.remainingRequests").value(4))
+				.andExpect(jsonPath("$.retryAfterSeconds").doesNotExist())
+				.andExpect(jsonPath("$.limit").doesNotExist())
+				.andExpect(jsonPath("$.resetInSeconds").doesNotExist());
+	}
+
+	@Test
+	void endpointSpecificRateLimitedHeadersUseAnnotationConfiguration() throws Exception {
+		when(rateLimiterService.consume("10.0.0.12", 10, 60))
+				.thenReturn(RateLimitResponse.allowed(8, 10, 45));
+
+		mockMvc.perform(requestWithClientIp("/api/demo", "10.0.0.12"))
+				.andExpect(status().isOk())
+				.andExpect(header().string("X-RateLimit-Limit", "10"))
+				.andExpect(header().string("X-RateLimit-Remaining", "8"))
+				.andExpect(header().string("X-RateLimit-Reset", "45"));
+
+		verify(rateLimiterService).consume("10.0.0.12", 10, 60);
+	}
+
+	@Test
+	void rateLimitExceededIncludesRateLimitHeaders() throws Exception {
+		when(rateLimiterService.consume("10.0.0.13", 10, 60))
+				.thenThrow(new RateLimitExceededException(37, 10, 37));
+
+		mockMvc.perform(requestWithClientIp("/api/demo", "10.0.0.13"))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(header().string("Retry-After", "37"))
+				.andExpect(header().string("X-RateLimit-Limit", "10"))
+				.andExpect(header().string("X-RateLimit-Remaining", "0"))
+				.andExpect(header().string("X-RateLimit-Reset", "37"));
+	}
+
+	@Test
+	void rateLimitExceededKeepsJsonBodyUnchanged() throws Exception {
+		when(rateLimiterService.consume("10.0.0.14", -1, -1))
+				.thenThrow(new RateLimitExceededException(37, 5, 37));
+
+		mockMvc.perform(requestWithClientIp("/api/test", "10.0.0.14"))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(jsonPath("$.success").value(false))
+				.andExpect(jsonPath("$.message").value("Too many requests"))
+				.andExpect(jsonPath("$.remainingRequests").value(0))
+				.andExpect(jsonPath("$.retryAfterSeconds").value(37))
+				.andExpect(jsonPath("$.limit").doesNotExist())
+				.andExpect(jsonPath("$.resetInSeconds").doesNotExist());
+	}
+
+	@Test
+	void statusEndpointDoesNotEmitRateLimitHeaders() throws Exception {
+		when(rateLimiterService.getStatus("10.0.0.15"))
+				.thenReturn(new RateLimitStatusResponse(5, 2, 3, 60, 40, "ACTIVE"));
+
+		mockMvc.perform(requestWithClientIp("/api/rate-limit/status", "10.0.0.15"))
+				.andExpect(status().isOk())
+				.andExpect(header().doesNotExist("X-RateLimit-Limit"))
+				.andExpect(header().doesNotExist("X-RateLimit-Remaining"))
+				.andExpect(header().doesNotExist("X-RateLimit-Reset"));
+	}
+
 }

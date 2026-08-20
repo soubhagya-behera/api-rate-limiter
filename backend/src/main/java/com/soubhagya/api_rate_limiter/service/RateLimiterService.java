@@ -57,10 +57,10 @@ public class RateLimiterService {
 
 		if (allowed == 0L) {
 			long retryAfterSeconds = Math.max(ttl, 0L);
-			throw new RateLimitExceededException(retryAfterSeconds);
+			throw new RateLimitExceededException(retryAfterSeconds, maxRequests, retryAfterSeconds);
 		}
 
-		return RateLimitResponse.allowed(remaining);
+		return RateLimitResponse.allowed(remaining, maxRequests, Math.max(ttl, 0L));
 	}
 
 	public RateLimitStatusResponse getStatus(String clientIp) {
