@@ -1,0 +1,33 @@
+# Build output (generated inside the Docker build)
+target/
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE files
+.idea
+.vscode
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+
+# Logs and temporary files
+logs/
+*.log
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker files themselves
+Dockerfile
+.dockerignore
+
+# Docs not needed in the image
+HELP.md
