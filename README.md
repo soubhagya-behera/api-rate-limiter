@@ -326,10 +326,6 @@ api-rate-limiter/
 └── README.md
 ```
 
-## License
-
-License: Not specified.
-
 ## Author
 
 **Soubhagya Kumar Behera**
