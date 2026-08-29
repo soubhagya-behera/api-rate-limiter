@@ -1,3 +1,6 @@
+# Processed by the nginx image entrypoint with envsubst.
+# BACKEND_UPSTREAM defaults to backend:8080 (Docker Compose service name);
+# set it to the public backend origin when the proxy target differs (e.g. Render).
 server {
     listen 80;
     server_name _;
@@ -12,14 +15,16 @@ server {
         try_files $uri =404;
     }
 
-    # Proxy API calls to the backend service (Docker Compose network).
+    # Proxy API calls to the backend service.
     location /api/ {
-        proxy_pass http://backend:8080;
+        proxy_pass http://${BACKEND_UPSTREAM};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        # Send SNI when the upstream is HTTPS (e.g. a hosted backend URL).
+        proxy_ssl_server_name on;
     }
 
     # SPA fallback: serve index.html for unknown paths.
