@@ -18,9 +18,12 @@ RUN npm run build
 # ---- Runtime stage: serve the static build with nginx ----
 FROM nginx:1.27-alpine
 # Default upstream is the Docker Compose backend service; override BACKEND_UPSTREAM
-# in production to point at the hosted backend origin. The entrypoint renders
-# /etc/nginx/templates/*.template into /etc/nginx/conf.d/ via envsubst.
+# in production to point at the hosted backend:
+#   - Render private network:  fromService "hostport" -> <internal-host>:<port>, BACKEND_PROTOCOL=http
+#   - Render public edge:      RENDER_EXTERNAL_HOSTNAME -> <host>.onrender.com,  BACKEND_PROTOCOL=https
+# The entrypoint renders /etc/nginx/templates/*.template into /etc/nginx/conf.d/ via envsubst.
 ENV BACKEND_UPSTREAM=backend:8080
+ENV BACKEND_PROTOCOL=http
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 

@@ -1,6 +1,15 @@
-# Processed by the nginx image entrypoint with envsubst.
-# BACKEND_UPSTREAM defaults to backend:8080 (Docker Compose service name);
-# set it to the public backend origin when the proxy target differs (e.g. Render).
+# Processed by the nginx image entrypoint with envsubst (the official nginx
+# image renders /etc/nginx/templates/*.template -> /etc/nginx/conf.d/*).
+#
+#   BACKEND_UPSTREAM  Upstream authority WITHOUT a scheme/prefix:
+#                     - "<internal host>:<port>" (e.g. "backend:8080" for Docker
+#                       Compose, or Render's fromService "hostport" value such as
+#                       "api-rate-limiter-backend-x17s:8080"), or
+#                     - a bare hostname for a TLS-terminated upstream (e.g. Render's
+#                       RENDER_EXTERNAL_HOSTNAME: "api-rate-limiter-backend.onrender.com").
+#   BACKEND_PROTOCOL  "http" for plain-HTTP upstreams (private network / Docker Compose);
+#                     "https" when the upstream is served over TLS (public onrender.com).
+# Defaults live in the Dockerfile: BACKEND_UPSTREAM=backend:8080, BACKEND_PROTOCOL=http.
 server {
     listen 80;
     server_name _;
@@ -17,13 +26,13 @@ server {
 
     # Proxy API calls to the backend service.
     location /api/ {
-        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_pass ${BACKEND_PROTOCOL}://${BACKEND_UPSTREAM};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        # Send SNI when the upstream is HTTPS (e.g. a hosted backend URL).
+        # Send SNI when the upstream is HTTPS (e.g. a public onrender.com host).
         proxy_ssl_server_name on;
     }
 

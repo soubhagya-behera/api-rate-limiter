@@ -26,8 +26,24 @@ services:
     dockerfilePath: ./frontend/Dockerfile
     dockerContext: ./frontend
     envVars:
+      # Free-plan web services can SEND private-network requests but CANNOT RECEIVE them,
+      # so the backend's private "hostport" hostname does not resolve from the frontend
+      # container and nginx aborts at startup with: host not found in upstream.
+      # Use the backend's PUBLIC hostname instead (still sourced from Render via
+      # fromService -> not hardcoded) and talk HTTPS through Render's edge.
+      #
+      # To restore private networking later, move the backend to a paid plan and use:
+      #   - key: BACKEND_UPSTREAM
+      #     fromService:
+      #       type: web
+      #       name: api-rate-limiter-backend
+      #       property: hostport
+      #   - key: BACKEND_PROTOCOL
+      #     value: "http"
       - key: BACKEND_UPSTREAM
         fromService:
           type: web
           name: api-rate-limiter-backend
-          property: hostport
+          envVarKey: RENDER_EXTERNAL_HOSTNAME
+      - key: BACKEND_PROTOCOL
+        value: "https"
