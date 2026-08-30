@@ -1,5 +1,6 @@
 package com.soubhagya.api_rate_limiter.controller;
 
+import com.soubhagya.api_rate_limiter.config.ClientIpResolver;
 import com.soubhagya.api_rate_limiter.config.RateLimitedInterceptor;
 import com.soubhagya.api_rate_limiter.config.WebConfig;
 import com.soubhagya.api_rate_limiter.exception.RateLimitExceededException;
@@ -24,7 +25,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(RateLimiterController.class)
-@Import({WebConfig.class, RateLimitedInterceptor.class})
+@Import({WebConfig.class, RateLimitedInterceptor.class, ClientIpResolver.class})
 class RateLimitedControllerTest {
 
 	@Autowired
@@ -36,6 +37,20 @@ class RateLimitedControllerTest {
 	private static MockHttpServletRequestBuilder requestWithClientIp(String path, String clientIp) {
 		return get(path).with(request -> {
 			request.setRemoteAddr(clientIp);
+			return request;
+		});
+	}
+
+	private static MockHttpServletRequestBuilder requestWithForwardedHeaders(String path, String forwardedFor,
+			String realIp, String remoteAddr) {
+		return get(path).with(request -> {
+			if (forwardedFor != null) {
+				request.addHeader("X-Forwarded-For", forwardedFor);
+			}
+			if (realIp != null) {
+				request.addHeader("X-Real-IP", realIp);
+			}
+			request.setRemoteAddr(remoteAddr);
 			return request;
 		});
 	}
@@ -184,6 +199,63 @@ class RateLimitedControllerTest {
 				.andExpect(header().doesNotExist("X-RateLimit-Limit"))
 				.andExpect(header().doesNotExist("X-RateLimit-Remaining"))
 				.andExpect(header().doesNotExist("X-RateLimit-Reset"));
+	}
+
+	@Test
+	void protectedEndpointUsesFirstXForwardedForEntry() throws Exception {
+		when(rateLimiterService.consume("203.0.113.9", -1, -1))
+				.thenReturn(RateLimitResponse.allowed(4));
+
+		mockMvc.perform(requestWithForwardedHeaders("/api/test", "203.0.113.9, 10.0.0.99", "198.51.100.7", "10.0.0.1"))
+				.andExpect(status().isOk());
+
+		verify(rateLimiterService).consume("203.0.113.9", -1, -1);
+	}
+
+	@Test
+	void protectedEndpointFallsBackToXRealIpWhenNoForwardedFor() throws Exception {
+		when(rateLimiterService.consume("198.51.100.7", -1, -1))
+				.thenReturn(RateLimitResponse.allowed(4));
+
+		mockMvc.perform(requestWithForwardedHeaders("/api/test", null, "198.51.100.7", "10.0.0.1"))
+				.andExpect(status().isOk());
+
+		verify(rateLimiterService).consume("198.51.100.7", -1, -1);
+	}
+
+	@Test
+	void protectedEndpointFallsBackToRemoteAddrWhenNoForwardingHeaders() throws Exception {
+		when(rateLimiterService.consume("10.0.0.1", -1, -1))
+				.thenReturn(RateLimitResponse.allowed(4));
+
+		mockMvc.perform(requestWithForwardedHeaders("/api/test", null, null, "10.0.0.1"))
+				.andExpect(status().isOk());
+
+		verify(rateLimiterService).consume("10.0.0.1", -1, -1);
+	}
+
+	@Test
+	void statusEndpointUsesFirstXForwardedForEntry() throws Exception {
+		when(rateLimiterService.getStatus("203.0.113.9"))
+				.thenReturn(new RateLimitStatusResponse(5, 1, 4, 60, 42, "ACTIVE"));
+
+		mockMvc.perform(requestWithForwardedHeaders("/api/rate-limit/status", "203.0.113.9, 10.0.0.99", "198.51.100.7", "10.0.0.1"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.used").value(1));
+
+		verify(rateLimiterService).getStatus("203.0.113.9");
+	}
+
+	@Test
+	void statusEndpointFallsBackToXRealIpWhenNoForwardedFor() throws Exception {
+		when(rateLimiterService.getStatus("198.51.100.7"))
+				.thenReturn(new RateLimitStatusResponse(5, 0, 5, 60, 0, "READY"));
+
+		mockMvc.perform(requestWithForwardedHeaders("/api/rate-limit/status", null, "198.51.100.7", "10.0.0.1"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.used").value(0));
+
+		verify(rateLimiterService).getStatus("198.51.100.7");
 	}
 
 }

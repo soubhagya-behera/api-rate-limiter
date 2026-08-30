@@ -1,6 +1,7 @@
 package com.soubhagya.api_rate_limiter.controller;
 
 import com.soubhagya.api_rate_limiter.annotation.RateLimited;
+import com.soubhagya.api_rate_limiter.config.ClientIpResolver;
 import com.soubhagya.api_rate_limiter.config.RateLimitedInterceptor;
 import com.soubhagya.api_rate_limiter.model.RateLimitResponse;
 import com.soubhagya.api_rate_limiter.model.RateLimitStatusResponse;
@@ -24,9 +25,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class RateLimiterController {
 
 	private final RateLimiterService rateLimiterService;
+	private final ClientIpResolver clientIpResolver;
 
-	public RateLimiterController(RateLimiterService rateLimiterService) {
+	public RateLimiterController(RateLimiterService rateLimiterService, ClientIpResolver clientIpResolver) {
 		this.rateLimiterService = rateLimiterService;
+		this.clientIpResolver = clientIpResolver;
 	}
 
 	@Operation(summary = "Test endpoint protected by the rate limiter",
@@ -80,7 +83,7 @@ public class RateLimiterController {
 	})
 	@GetMapping("/rate-limit/status")
 	public RateLimitStatusResponse status(HttpServletRequest request) {
-		String clientIp = request.getRemoteAddr();
+		String clientIp = clientIpResolver.resolve(request);
 		return rateLimiterService.getStatus(clientIp);
 	}
 

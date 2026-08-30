@@ -17,9 +17,11 @@ public class RateLimitedInterceptor implements HandlerInterceptor {
 	public static final String RESPONSE_ATTRIBUTE = RateLimitedInterceptor.class.getName() + ".response";
 
 	private final RateLimiterService rateLimiterService;
+	private final ClientIpResolver clientIpResolver;
 
-	public RateLimitedInterceptor(RateLimiterService rateLimiterService) {
+	public RateLimitedInterceptor(RateLimiterService rateLimiterService, ClientIpResolver clientIpResolver) {
 		this.rateLimiterService = rateLimiterService;
+		this.clientIpResolver = clientIpResolver;
 	}
 
 	@Override
@@ -34,7 +36,7 @@ public class RateLimitedInterceptor implements HandlerInterceptor {
 		}
 
 		RateLimitResponse rateLimitResponse = rateLimiterService.consume(
-				request.getRemoteAddr(), rateLimited.maxRequests(), rateLimited.windowSeconds());
+				clientIpResolver.resolve(request), rateLimited.maxRequests(), rateLimited.windowSeconds());
 		RateLimitHeaders.apply(response, rateLimitResponse);
 		request.setAttribute(RESPONSE_ATTRIBUTE, rateLimitResponse);
 		return true;
