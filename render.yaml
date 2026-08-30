@@ -6,7 +6,7 @@ services:
   # into the backend's SPRING_DATA_REDIS_HOST when prompted below.
   - type: redis
     name: api-rate-limiter-redis
-    plan: hobby # adjust to your preferred plan
+    plan: free # adjust to your preferred plan
     ipAllowList: [] # private access only (backend connects over Render's network)
 
   # Spring Boot API. Listens on Render's PORT via server.port=${PORT:8080}.
