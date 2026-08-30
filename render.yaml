@@ -9,6 +9,7 @@ services:
     runtime: docker
     plan: free
     dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
     healthCheckPath: /actuator/health
     envVars:
       - key: SPRING_DATA_REDIS_HOST
@@ -23,6 +24,7 @@ services:
     runtime: docker
     plan: free
     dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
     envVars:
       - key: BACKEND_UPSTREAM
         fromService:
